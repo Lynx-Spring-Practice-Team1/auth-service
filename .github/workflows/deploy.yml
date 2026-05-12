@@ -25,4 +25,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/lynx-spring/practice-team1/auth-service:latest
+          tags: ghcr.io/lynx-spring-practice-team1/auth-service:latest
