@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, func
+from sqlalchemy import Column, DateTime, Integer, JSON, String, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from app.database import Base
 
 
@@ -9,4 +10,13 @@ class User(Base):
     username = Column(String(64), unique=True, nullable=False, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
+    preferences = Column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=dict,
+        server_default=text(
+            '\'{"order_updates": true, "market_alerts": true, '
+            '"email_notifications": false, "compact_account_view": false}\''
+        ),
+    )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
