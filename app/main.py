@@ -1,10 +1,12 @@
 import json
 
-from fastapi import FastAPI, Depends, HTTPException, status
-from sqlalchemy import inspect, text
+from fastapi import FastAPI, Depends, Header, HTTPException, Query, status
+from pydantic import BaseModel
+from sqlalchemy import inspect, or_, text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
+from app.config import settings
 from app.database import engine, get_db
 from app.models import Base, User
 from app.schemas import (
@@ -59,7 +61,25 @@ def ensure_preferences_column() -> None:
             )
 
 
+def ensure_suspension_columns() -> None:
+    inspector = inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    with engine.begin() as conn:
+        if "is_suspended" not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_suspended BOOLEAN NOT NULL DEFAULT false"))
+        if "suspended_reason" not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN suspended_reason VARCHAR(500)"))
+
+
 ensure_preferences_column()
+ensure_suspension_columns()
+
+
+def require_internal_token(
+    x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+) -> None:
+    if x_internal_token != settings.internal_service_token:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal token")
 
 
 def to_user_profile(user: User) -> UserProfile:
@@ -157,3 +177,83 @@ def change_password(
     user.hashed_password = hash_password(body.new_password)
     db.commit()
     return MessageResponse(message="Password updated")
+
+
+def _user_to_admin_dict(user: User) -> dict:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "is_suspended": bool(user.is_suspended),
+        "suspended_reason": user.suspended_reason,
+    }
+
+
+@app.get("/internal/admin/users")
+def admin_list_users(
+    _: None = Depends(require_internal_token),
+    q: str | None = Query(default=None),
+    status_filter: str = Query(default="all", alias="status"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+) -> dict:
+    query = db.query(User)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(User.username.ilike(like), User.email.ilike(like)))
+    if status_filter == "active":
+        query = query.filter(User.is_suspended == False)  # noqa: E712
+    elif status_filter == "suspended":
+        query = query.filter(User.is_suspended == True)  # noqa: E712
+    total = query.count()
+    users = query.order_by(User.id).offset(offset).limit(limit).all()
+    return {"items": [_user_to_admin_dict(u) for u in users], "total": total, "limit": limit, "offset": offset}
+
+
+@app.get("/internal/admin/users/{user_id}")
+def admin_get_user(
+    user_id: int,
+    _: None = Depends(require_internal_token),
+    db: Session = Depends(get_db),
+) -> dict:
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return _user_to_admin_dict(user)
+
+
+class AdminSuspendRequest(BaseModel):
+    reason: str | None = None
+
+
+@app.post("/internal/admin/users/{user_id}/suspend")
+def admin_suspend_user(
+    user_id: int,
+    body: AdminSuspendRequest,
+    _: None = Depends(require_internal_token),
+    db: Session = Depends(get_db),
+) -> dict:
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    user.is_suspended = True
+    user.suspended_reason = body.reason
+    db.commit()
+    return _user_to_admin_dict(user)
+
+
+@app.post("/internal/admin/users/{user_id}/reactivate")
+def admin_reactivate_user(
+    user_id: int,
+    _: None = Depends(require_internal_token),
+    db: Session = Depends(get_db),
+) -> dict:
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    user.is_suspended = False
+    user.suspended_reason = None
+    db.commit()
+    return _user_to_admin_dict(user)

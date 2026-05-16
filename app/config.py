@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
+    internal_service_token: str = "change-me-in-production"
 
     class Config:
         env_file = ".env"
@@ -14,6 +15,7 @@ class Settings(BaseSettings):
         fields = {
             "jwt_secret": {"env": "JWT_SECRET"},
             "database_url": {"env": "DATABASE_URL"},
+            "internal_service_token": {"env": "INTERNAL_SERVICE_TOKEN"},
         }
 
 
