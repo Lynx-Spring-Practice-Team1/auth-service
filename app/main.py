@@ -1,6 +1,7 @@
 import json
 
 from fastapi import FastAPI, Depends, Header, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import inspect, or_, text
 from sqlalchemy.orm import Session
@@ -121,7 +122,10 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
         db.refresh(user)
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username or email already taken")
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"message": "Registration processed. If this is a new account, please sign in."},
+        )
     return TokenResponse(access_token=create_access_token(user.id))
 
 

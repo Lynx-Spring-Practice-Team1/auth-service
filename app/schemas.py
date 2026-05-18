@@ -6,7 +6,7 @@ from pydantic import BaseModel, EmailStr, Field
 class SignupRequest(BaseModel):
     username: str
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8)
 
 
 class SigninRequest(BaseModel):
